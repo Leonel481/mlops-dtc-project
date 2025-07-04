@@ -1,0 +1,23 @@
+[project]
+name = "churn-mlops-project"
+version = "0.1.0"
+description = "End-to-end MLOps pipeline for predicting customer churn using e-commerce transaction data. Includes data processing, model training, evaluation, CI/CD, and deployment."
+authors = [
+    {name = "Leonel481",email = "leonel.aliaga.v@gmail.com"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = "^3.12"
+dependencies = [
+    "pandas (>=2.3.0,<3.0.0)",
+    "scikit-learn (>=1.7.0,<2.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.dev.dependencies]
+requests = "^2.32.4"
+
