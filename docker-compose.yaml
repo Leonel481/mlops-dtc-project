@@ -1,0 +1,73 @@
+services:
+
+  minio:
+    image: minio/minio
+    container_name: minio_datatalksclub
+    ports:
+      - "9000:9000"
+      - "9001:9001" # Web UI
+    environment:
+      - MINIO_ROOT_USER=minio_user
+      - MINIO_ROOT_PASSWORD=minio_password
+      - MINIO_ADDRESS=:9000
+      - MINIO_PORT=9000
+      - MINIO_STORAGE_USE_HTTPS=False
+      - MINIO_CONSOLE_ADDRESS=:9001
+    command: server /data
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Create MinIO bucket
+  minio-create-bucket:
+    image: minio/mc
+    container_name: minio-create-bucket-datatalksclub
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      bash -c "
+        mc alias set minio http://minio:9000 minio_user minio_password &&
+        if ! mc ls minio/mlflow; then
+          mc mb minio/mlflow
+        else
+          echo 'Bucket already exists'
+        fi
+      "
+
+  # MLflow Tracking Server
+  mlflow:
+    build:
+      context: .
+      dockerfile: ./Dockerfile.mlflow
+    container_name: mlflow-server-datatalksclub
+    ports:
+      - "5000:5000"
+    environment:
+      - AWS_ACCESS_KEY_ID=minio_user
+      - AWS_SECRET_ACCESS_KEY=minio_password
+      - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
+      - MLFLOW_S3_IGNORE_TLS=true
+    depends_on:
+      - postgres
+      - minio
+      - minio-create-bucket
+    command: >
+      mlflow server
+      --backend-store-uri postgresql://airflow:airflow@postgres:5432/mlflow
+      --host 0.0.0.0
+      --serve-artifacts
+      --artifacts-destination s3://mlflow
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3    
+
+volumes:
+  postgres-db-volume:
+  minio-data:
