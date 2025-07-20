@@ -1,17 +1,20 @@
 import pandas as pd
 import numpy as np
+from pathlib import Path
 
-class TransformData:
+class TransformData():
     """
     Class to transform data for churn prediction.
     """
-    def __init__(self, months_window_obs: int, months_window_churn: int):
+    def __init__(self, months_window_obs: int = 3, months_window_churn: int = 3):
         """
         Initialize the TransformData class.
         Args:
             window_obs (int): Number of months for the observation window.
             window_churn (int): Number of months for the churn window.
         """
+        if months_window_obs <= 0 or months_window_churn <= 0:
+            raise ValueError("Observation and churn windows must be positive integers.")
         self.months_window_obs = months_window_obs  # months for observation window
         self.months_window_churn = months_window_churn  # months for churn window
 
@@ -28,6 +31,10 @@ class TransformData:
         df = df.dropna(subset=['CustomerID'])
         df['CustomerID'] = df['CustomerID'].astype(int).astype(str)
         df = df[~df['Description'].isin(['Manual','Discount','This is a test product.'])]
+
+        self.data_start = df['InvoiceDate'].min().strftime('%Y%m')
+        self.data_end = df['InvoiceDate'].max().strftime('%Y%m')
+
         return df
     
 
@@ -62,7 +69,7 @@ class TransformData:
         
         return df_grouped
 
-    def transform_data(self, df: pd.DataFrame) -> pd.DataFrame:
+    def transform_data(self, df: pd.DataFrame, churn_treshold: int = 0.2) -> pd.DataFrame:
         """
         Transform the data to create features for churn prediction.
 
@@ -77,7 +84,7 @@ class TransformData:
         meses_obs = self.months_window_obs
         meses_churn = self.months_window_churn
         obs_ini = df['InvoiceDate'].min() # 2010-12-01
-
+        churn_treshold = churn_treshold
         window = []
         window_id = 1
 
@@ -140,7 +147,7 @@ class TransformData:
                 value_churn = df_churn[df_churn['CustomerID'] == customer]['Total_value'].sum()
 
                 # Churn
-                churn = 1 if (customer not in customer_churn or value_churn <= 0.2 * total_value_obs) else 0
+                churn = 1 if (customer not in customer_churn or value_churn <= churn_treshold * total_value_obs) else 0
 
                 # Filter so that the window does not have only returns
                 if total_products_buys == 0 and total_products_return > 0:
@@ -178,14 +185,24 @@ class TransformData:
 
         return df_ventanas
 
-    def export_data(self, df: pd.DataFrame, gcs_path: str) -> None:
+    def export_data(self, df: pd.DataFrame, gcs_path: str) -> str:
         """
         Export the transformed data to Google Cloud Storage.
 
         Args:
             df (DataFrame): Transformed DataFrame.
-            gcs_path (str): Path to save the CSV file in Google Cloud Storage.
+            gcs_path (str): Path to save the Parquet file in Google Cloud Storage.
+
+        Retrurns:
+            str: Path to the exported Parquet file.
         """
-        df.to_csv(gcs_path, index=False)
-        print(f"Data exported to {gcs_path}")
+        start_date = self.data_start
+        end_date = self.data_end
+        num_windows = df['window_id'].nunique()
+
+        filename = f'data_{start_date}-{end_date}_{num_windows}window.parquet'
+        full_path = Path(gcs_path) / filename
+
+        df.to_parquet(full_path, index=False)
+        print(f"Data exported to {full_path}")
         return df
