@@ -1,0 +1,173 @@
+services:
+  postgres:
+    image: postgres:14
+    container_name: mlops-postgres
+    environment:
+      POSTGRES_USER: prefect
+      POSTGRES_PASSWORD: prefect
+      POSTGRES_DB: prefect
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prefect"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    container_name: mlops-redis
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  prefect-server:
+    image: prefecthq/prefect:3-latest
+    container_name: mlops-prefect-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      PREFECT_UI_URL: http://127.0.0.1:4200/api
+      PREFECT_API_URL: http://127.0.0.1:4200/api
+      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://prefect:prefect@postgres:5432/prefect
+      PREFECT_SERVER_API_HOST: 0.0.0.0
+      PREFECT_MESSAGING_BROKER: prefect_redis.messaging
+      PREFECT_MESSAGING_CACHE: prefect_redis.messaging
+      PREFECT_REDIS_MESSAGING_HOST: redis
+      PREFECT_REDIS_MESSAGING_PORT: 6379
+      PREFECT_REDIS_MESSAGING_DB: 0
+    command: prefect server start --no-services
+    ports:
+      - "4200:4200"
+
+  prefect-services:
+    image: prefecthq/prefect:3-latest
+    container_name: mlops-prefect-services
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://prefect:prefect@postgres:5432/prefect
+      PREFECT_MESSAGING_BROKER: prefect_redis.messaging
+      PREFECT_MESSAGING_CACHE: prefect_redis.messaging
+      PREFECT_REDIS_MESSAGING_HOST: redis
+      PREFECT_REDIS_MESSAGING_PORT: 6379
+      PREFECT_REDIS_MESSAGING_DB: 0
+    command: prefect server services start
+
+  # prefect-worker:
+  #   image: prefecthq/prefect:3-latest
+  #   container_name: mlops-prefect-worker
+  #   depends_on:
+  #     prefect-server:
+  #       condition: service_started
+  #   environment:
+  #     PREFECT_API_URL: http://prefect-server:4200/api
+  #   command: prefect worker start --pool local-pool
+
+  prefect-worker:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    image: mlops-prefect-worker:latest
+    container_name: mlops-prefect-worker
+    depends_on:
+      # prefect-create-pool:
+      #   condition: service_started
+      prefect-server:
+        condition: service_started
+    environment:
+      PREFECT_API_URL: http://prefect-server:4200/api
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    # command: prefect worker start --pool local-pool
+    command: ["bash"]
+    # entrypoint: ['/entrypoint.sh']
+    
+      # >
+      # bash -c "
+      # sleep 5;
+      # until curl -s http://prefect-server:4200/api/health; do
+      #   echo 'Waiting for Prefect Server...';
+      #   sleep 5;
+      # done;
+      # echo 'Prefect Server is up!';
+      # prefect worker start --pool local-pool
+      # "
+
+  # prefect-create-pool:
+  #   image: prefecthq/prefect:3-latest
+  #   container_name: mlops-prefect-create-pool
+  #   depends_on:
+  #     prefect-server:
+  #       condition: service_started
+  #   environment:
+  #     PREFECT_API_URL: http://prefect-server:4200/api
+  #   entrypoint: >
+  #     bash -c "
+  #     prefect work-pool inspect local-pool || prefect work-pool create local-pool --type process;
+  #     "
+    # entrypoint: >
+    #     bash -c "
+    #     echo 'Esperando que Prefect Server esté listo...';
+    #     until curl -s http://prefect-server:4200/api/health | grep 'api'; do
+    #       echo 'Prefect Server aún no está listo. Esperando...';
+    #       sleep 5;
+    #     done;
+    #     echo 'Prefect Server listo!';
+    #     prefect work-pool inspect local-pool || prefect work-pool create local-pool --type process;
+    #     "
+
+  # minio service
+  minio:
+    image: minio/minio
+    container_name: minio_datatalksclub
+    ports:
+      - "9000:9000"
+      - "9001:9001" # Web UI
+    environment:
+      - MINIO_ROOT_USER=minio_user
+      - MINIO_ROOT_PASSWORD=minio_password
+      - MINIO_ADDRESS=:9000
+      - MINIO_PORT=9000
+      - MINIO_STORAGE_USE_HTTPS=False
+      - MINIO_CONSOLE_ADDRESS=:9001
+    command: server /data
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Create MinIO bucket
+  minio-create-bucket:
+    image: minio/mc
+    container_name: minio-create-bucket-datatalksclub
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      bash -c "
+        mc alias set minio http://minio:9000 minio_user minio_password &&
+        if ! mc ls minio/mlops-bucket; then
+          mc mb minio/mlops-bucket
+        else
+          echo 'Bucket already exists'
+        fi
+      "
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio-data:

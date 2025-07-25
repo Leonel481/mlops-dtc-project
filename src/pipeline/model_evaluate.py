@@ -6,9 +6,11 @@ import seaborn as sns
 import joblib
 import json
 
-class ModelEvaluate:
+class ModelEvaluate():
+
     def __init__(self, model_path: str):
         self.model = joblib.load(model_path)
+
 
     def evaluate(self, X_test: pd.DataFrame, y_test: pd.Series, save_metrics_path: str = None):
         y_pred = self.model.predict(X_test)
@@ -42,3 +44,8 @@ class ModelEvaluate:
                 json.dump(metrics, f, indent=2)
 
         return metrics
+    
+class Metrics():
+
+    def __init__(self):
+        self.model = 'model'

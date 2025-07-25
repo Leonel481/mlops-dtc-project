@@ -1,6 +1,22 @@
 import pandas as pd
 import numpy as np
-from pathlib import Path
+import pickle
+import fsspec
+from typing import Tuple, Any
+from sklearn.preprocessing import OneHotEncoder
+
+def dump_pickle(obj: Any, path: str, **kwargs):
+    """
+    Save an object as a pickle file to local or remote storage (e.g., GCS).
+
+    Args:
+        obj (Any): Object to be pickled.
+        path (str): Full path to save the pickle file (supports GCS, S3, local).
+    """
+    fs, _, paths = fsspec.get_fs_token_paths(path , **kwargs)
+    with fs.open(paths[0], "wb") as f_out:
+        pickle.dump(obj, f_out)
+    
 
 class TransformData():
     """
@@ -9,6 +25,7 @@ class TransformData():
     def __init__(self, months_window_obs: int = 3, months_window_churn: int = 3):
         """
         Initialize the TransformData class.
+
         Args:
             window_obs (int): Number of months for the observation window.
             window_churn (int): Number of months for the churn window.
@@ -18,15 +35,17 @@ class TransformData():
         self.months_window_obs = months_window_obs  # months for observation window
         self.months_window_churn = months_window_churn  # months for churn window
 
-    def load_data(self, gcs_path: str) -> pd.DataFrame:
+    def load_data(self, gcs_path: str , **kwargs) -> pd.DataFrame:
         """
-        Run the transformation process.
+        Load data raw from Google Clous Storage and return DataFrame.
+
         Args:
             gcs_path (str): Path to the CSV file in Google Cloud Storage.
+
         Returns:
             DataFrame: Transformed DataFrame with features for churn prediction.
         """
-        df = pd.read_csv(gcs_path)
+        df = pd.read_csv(gcs_path, **kwargs)
         df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"]).dt.normalize()
         df = df.dropna(subset=['CustomerID'])
         df['CustomerID'] = df['CustomerID'].astype(int).astype(str)
@@ -37,7 +56,6 @@ class TransformData():
 
         return df
     
-
     def group_daily_dates(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Group the data by daily dates.
@@ -181,28 +199,174 @@ class TransformData():
             obs_ini = obs_ini + pd.DateOffset(months=meses_obs)
             window_id += 1
 
-        df_ventanas = pd.DataFrame(window)
+        df_transformed  = pd.DataFrame(window)
 
-        return df_ventanas
+        return df_transformed 
 
-    def export_data(self, df: pd.DataFrame, gcs_path: str) -> str:
+    def handle_outliers(self, df: pd.DataFrame, cols: list, group_col: str ='window_id') -> pd.DataFrame:
         """
-        Export the transformed data to Google Cloud Storage.
+        Handle outliers using winsorizing (clip to Tukey bounds) for each group.
 
         Args:
             df (DataFrame): Transformed DataFrame.
-            gcs_path (str): Path to save the Parquet file in Google Cloud Storage.
+            cols (list): List of columns for treatment outliers
+            group_col: Column for agrouped DataFrame
+        
+        Returns:
+            DataFrame: Cleaned DataFrame with features for churn prediction.
+        """
+        
+        df = df.copy()
 
-        Retrurns:
-            str: Path to the exported Parquet file.
+        for col in cols:
+        # Make sure the column is float to avoid errors when assigning Q1/Q3
+            if not pd.api.types.is_float_dtype(df[col]):
+                df[col] = df[col].astype(float)
+
+            # Limits for group
+            grouped = df.groupby(group_col)[col]
+            Q1 = grouped.transform(lambda x: x.quantile(0.25))
+            Q3 = grouped.transform(lambda x: x.quantile(0.75))
+            IQR = Q3 - Q1
+            lower = Q1 - 1.5 * IQR
+            upper = Q3 + 1.5 * IQR
+
+            # Clip (winsorize)
+            df[col] = df[col].clip(lower, upper)
+
+        return df 
+
+    def features(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, OneHotEncoder] :
+        """
+        Prepare features and train, test datasets.
+
+        Args:
+            df (pd.DataFrame): Dataframe process with handle outliers.
+
+        Returns:
+            Dataframe: Dataframe with encoders
+            encoder: Enconder of the features month_frecuency
+        """
+
+        # OneHotEncode for month_frecuency
+        encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
+        month_encoded  = encoder.fit_transform(df[['month_frecuency']])
+        month_encoded_df = pd.DataFrame(month_encoded, columns=encoder.get_feature_names_out(['month_frecuency']), index=df.index)
+    
+        df_num = df.drop(columns=['CustomerID', 'month_frecuency'])
+        df_final = pd.concat([df_num, month_encoded_df], axis=1)
+
+        return df_final, encoder
+
+
+    def load_data_clean(self, df: pd.DataFrame, gcs_path: str, encoder: OneHotEncoder, engine: str = 'pyarrow', **kwargs) -> str:
+        """
+        Save the transformed data (parquet) and encoder (pkl) to Google Cloud Storage.
+
+        Args:
+            df (DataFrame): Cleaned DataFrame.
+            gcs_path (str): Path to save the Parquet file in Google Cloud Storage.
+            encoder: Encoder
+            engine: pyarrow
+
+        Returns:
+            str: Path to the save Parquet file.
         """
         start_date = self.data_start
         end_date = self.data_end
-        num_windows = df['window_id'].nunique()
 
-        filename = f'data_{start_date}-{end_date}_{num_windows}window.parquet'
-        full_path = Path(gcs_path) / filename
+        filename = f'data_{start_date}_{end_date}'
+        full_path = f'{gcs_path.rstrip('/')}/{filename}.parquet'
+        encoder_path = f"{gcs_path.rstrip('/')}/encoder_{filename}.pkl"
 
-        df.to_parquet(full_path, index=False)
-        print(f"Data exported to {full_path}")
-        return df
+        df.to_parquet(full_path, engine = engine,index=False, **kwargs)
+        dump_pickle(encoder, encoder_path)
+
+        print(f"Data save to {gcs_path}")
+
+        return str(gcs_path)
+    
+       # def features(self, df: pd.DataFrame, window_target : int = None) -> tuple :
+    #     """
+    #     Prepare features and train, test datasets.
+
+    #     Args:
+    #         df (pd.DataFrame): Dataframe process with handle outliers.
+    #         window_target (int): Window to use as a test (last by default).
+
+    #     Returns:
+    #         tuple: (X_train_scaled, X_test_scaled, y_train, y_test, scaler, X_encoded)
+    #     """
+
+    #     # Target window
+    #     window_target = window_target if window_target is not None else df_f['window_id'].max()
+
+    #     # Split data and target
+    #     train_df = df[df['window_id'] < window_target - 1]
+    #     valid_df = df[df['window_id'] == window_target - 1]
+    #     test_df  = df[df['window_id'] == window_target]
+
+    #     y_train = train_df['churn']
+    #     y_valid = valid_df['churn']
+    #     y_test = test_df['churn']
+
+    #     # Separate Features
+    #     X_train_num = train_df.drop(columns=['CustomerID', 'window_id', 'churn', 'month_frecuency'])
+    #     X_valid_num = valid_df.drop(columns=['CustomerID', 'window_id', 'churn', 'month_frecuency'])
+    #     X_test_num = test_df.drop(columns=['CustomerID', 'window_id', 'churn', 'month_frecuency'])
+
+    #     # OneHotEncode for month_frecuency
+    #     encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
+    #     X_train_cat = encoder.fit_transform(train_df[['month_frecuency']])
+    #     X_valid_cat = encoder.fit_transform(valid_df[['month_frecuency']])
+    #     X_test_cat = encoder.transform(test_df[['month_frecuency']])
+
+    #     # Combine numeric and categorical
+    #     X_train_full = np.hstack([X_train_num.values, X_train_cat])
+    #     X_valid_full = np.hstack([X_valid_num.values, X_valid_cat])
+    #     X_test_full = np.hstack([X_test_num.values, X_test_cat])
+
+    #     # Scale
+    #     scaler = StandardScaler()
+    #     X_train_scaled = scaler.fit_transform(X_train_full)
+    #     X_valid_scaled = scaler.fit_transform(X_valid_full)
+    #     X_test_scaled = scaler.transform(X_test_full)
+
+    #     return X_train_scaled, X_valid_scaled, X_test_scaled, y_train, y_valid,  y_test, scaler, encoder
+
+
+    
+    # def save_artifacts(self, gcs_path: str, X_train_scaled, X_test_scaled, y_train, y_test, scaler, encoder) -> Tuple[str, str, str, str]:
+    #     """
+    #     Save model artifacts (datasets, scaler, encoder) as pickles.
+
+    #     Args:
+    #         gcs_path (str): Base GCS path (e.g., "gs://bucket/artifacts").
+    #         X_train_scaled (np.ndarray): Scaled training features.
+    #         X_test_scaled (np.ndarray): Scaled test features.
+    #         y_train (np.ndarray): Training labels.
+    #         y_test (np.ndarray): Test labels.
+    #         scaler (Any): Fitted scaler object (e.g., StandardScaler).
+    #         encoder (Any): Fitted encoder object (e.g., OneHotEncoder).
+
+    #     Returns:
+    #         Tuple[str, str, str, str]: Paths to the saved pickle files.
+    #     """
+    #     start_date = self.data_start
+    #     end_date = self.data_end
+    #     filename = f'data_{start_date}_{end_date}.parquet'
+
+
+    #     train_path = f"{gcs_path.rstrip('/')}/train_{filename}.pkl"
+    #     test_path = f"{gcs_path.rstrip('/')}/test_{filename}.pkl"
+    #     scaler_path = f"{gcs_path.rstrip('/')}/scaler_{filename}.pkl"
+    #     encoder_path = f"{gcs_path.rstrip('/')}/encoder_{filename}.pkl"
+
+    #     dump_pickle((X_train_scaled, y_train), train_path)
+    #     dump_pickle((X_test_scaled, y_test), test_path)
+    #     dump_pickle(scaler, scaler_path)
+    #     dump_pickle(encoder, encoder_path)
+
+    #     print(f"Artifacts save to {gcs_path}")
+
+    #     return train_path, test_path, scaler_path, encoder_path

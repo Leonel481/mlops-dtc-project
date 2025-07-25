@@ -1,48 +1,61 @@
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import StandardScaler
-from lightgbm import LGBMClassifier
-from xgboost import XGBClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix
-import pandas as pd
+from google.cloud import aiplatform
+import pickle, fsspec
+from typing import Any, Dict
+from sklearn.metrics import roc_auc_score
+
 
 class ModelTrain():
     """
     Class for training model churn
     """
-    def __init__(self, months_window_obs: int = 3, months_window_churn: int = 3):
+    def __init__(self, project: str, location: str, bucket: str):
         """
-        Initialize the TransformData class.
+        Initialize the ModelTrain class.
+
         Args:
-            window_obs (int): Number of months for the observation window.
-            window_churn (int): Number of months for the churn window.
+            project (str): GCP Project ID.
+            location (str): Region (e.g., "us-central1").
+            bucket (str): GCS bucket for artifacts (optional, only for manual saves).
         """
-        if months_window_obs <= 0 or months_window_churn <= 0:
-            raise ValueError("Observation and churn windows must be positive integers.")
-        self.months_window_obs = months_window_obs  # months for observation window
-        self.months_window_churn = months_window_churn  # months for churn window
+        self.project = project
+        self.location = location
+        self.bucket = bucket
+        self.best_model = None
+        self.best_model_name = None
+        aiplatform.init(project=project, location=location)
+   
+
+    def train_base_models(self, models: Dict, X_train, y_train, X_val, y_val) -> Dict :
+        """
+        Train multiple models locally and return their ROC-AUC.
+
+        Args:
+            models (Dict): Dict with model names and sklearn-compatible estimators.
+            X_train: Features for training.
+            y_train: Labels for training.
+            X_eval: Features for evaluation.
+            y_eval: Labels for evaluation.
+
+        Returns:
+            Dict[str, float]: Model names and their ROC-AUC scores. 
+        """
+
+        scores = {}
+
+        for name, model in models.items():
+            print(f"\nEntrenando {name}...")
+            model.fit(X_train, y_train)
+            score_auc = roc_auc_score(y_val, model.predict_proba(X_val)[:, 1])
+            scores[name] = score_auc
+            print(f"{name} ROC-AUC: {score_auc:.4f}")
+        self.best_model_name = max(scores, key=scores.get)
+        self.best_model = models[self.best_model_name]
+        return scores
+
+    def register_model_vertex(self, model_name: str)-> aiplatform.Model:
 
 
-    def load_data(self, df: pd.DataFrame, window_target) -> list:
-        
-        df_ventanas_f = pd.get_dummies(df, columns=['month_frecuency'], prefix='mes', dtype=int).sort_values(['window_id']).reset_index(drop=True)
 
-        train_df = df_ventanas_f[df_ventanas_f['window_id'] < window_target]
-        test_df  = df_ventanas_f[df_ventanas_f['window_id'] == window_target]
-
-        X_train = train_df.drop(columns=['CustomerID', 'window_id', 'churn'])
-        y_train = train_df['churn']
-
-        X_test = test_df.drop(columns=['CustomerID', 'window_id', 'churn'])
-        y_test = test_df['churn']
-
-        scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
-        X_test_scaled = scaler.transform(X_test)
-
-        return X_train_scaled, X_test_scaled, y_train, y_test
-    
-    def model_train():
 
         # Diccionario de modelos (con mínimos ajustes para evitar warnings)
         models = {

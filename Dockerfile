@@ -1,16 +1,15 @@
-# Dockerfile
-FROM prefecthq/prefect:2-python3.10
+FROM prefecthq/prefect:3-python3.12
 
-# Instala dependencias del sistema
-RUN apt-get update && apt-get install -y gcc git libpq-dev && apt-get clean
+RUN apt-get update && apt-get install -y gcc git libpq-dev curl && rm -rf /var/lib/apt/lists/*
 
-# Copia y instala dependencias con Poetry (ajusta si usas pip)
-COPY pyproject.toml poetry.lock ./
-RUN pip install poetry && poetry install --no-root
+# WORKDIR /app
 
-# Copia el código fuente
-COPY . /app
-WORKDIR /app
+# COPY pyproject.toml poetry.lock ./
+# RUN pip install poetry && poetry install --no-root
 
-# Ejecutar bash por defecto (o ajusta en docker-compose)
-CMD ["bash"]
+# COPY src/ .
+COPY scripts/entrypoint.sh /entrypoint.sh
+
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

@@ -37,7 +37,7 @@ resource "google_compute_firewall" "allow_https" {
 #--------- Google Cloud Storage -----------------------------
 #------------------------------------------------------------
 
-resource "google_storage_bucket" "mlops_bucket" {
+resource "google_storage_bucket" "mlops-bucket" {
   name          = var.bucket_name
   location      = var.bucket_location
   force_destroy = true
@@ -45,29 +45,29 @@ resource "google_storage_bucket" "mlops_bucket" {
   uniform_bucket_level_access = true
 }
 
-resource "google_storage_bucket_object" "data_raw_marker" {
-  name   = "data_raw/.init"
-  bucket = google_storage_bucket.mlops_bucket.name
-  content = ""
-}
+# resource "google_storage_bucket_object" "data_raw_marker" {
+#   name   = "data_raw/.init"
+#   bucket = google_storage_bucket.mlops_bucket.name
+#   content = ""
+# }
 
-resource "google_storage_bucket_object" "data_processed_marker" {
-  name   = "data_processed/.init"
-  bucket = google_storage_bucket.mlops_bucket.name
-  content = ""
-}
+# resource "google_storage_bucket_object" "data_processed_marker" {
+#   name   = "data_processed/.init"
+#   bucket = google_storage_bucket.mlops_bucket.name
+#   content = ""
+# }
 
-resource "google_storage_bucket_object" "models_marker" {
-  name   = "models/.init"
-  bucket = google_storage_bucket.mlops_bucket.name
-  content = ""
-}
+# resource "google_storage_bucket_object" "models_marker" {
+#   name   = "models/.init"
+#   bucket = google_storage_bucket.mlops_bucket.name
+#   content = ""
+# }
 
-resource "google_storage_bucket_object" "predictions_marker" {
-  name   = "predictions/.init"
-  bucket = google_storage_bucket.mlops_bucket.name
-  content = ""
-}
+# resource "google_storage_bucket_object" "predictions_marker" {
+#   name   = "predictions/.init"
+#   bucket = google_storage_bucket.mlops_bucket.name
+#   content = ""
+# }
 
 #------------------------------------------------------------
 #--------- Compute Engine Instance --------------------------
@@ -147,14 +147,14 @@ resource "google_compute_instance" "vm-001-prod-scp-backend-uscentral" {
 #--------- Big Query ----------------------------------------
 #------------------------------------------------------------
 
-resource "google_bigquery_dataset" "mlops_dataset" {
+resource "google_bigquery_dataset" "mlops-dataset" {
   dataset_id                  = var.bq_dataset_id
   description                 = "Dataset for MLOps metrics"
   location                    = var.bq_location
 
 }
 
-resource "google_bigquery_table" "default" {
+resource "google_bigquery_table" "model-metrics" {
   dataset_id = google_bigquery_dataset.default.dataset_id
   table_id   = var.bq_table_name
 
