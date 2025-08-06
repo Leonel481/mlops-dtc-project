@@ -94,10 +94,12 @@ def test_load_data_clean():
 
     cols = df_transform.drop(columns=['CustomerID', 'window_id', 'churn']).columns.tolist()
     df_cleaned = transformer.handle_outliers(df_transform, cols)
+    df_final, encoder = transformer.features(df_cleaned)
 
     path_clean = minio_path_data_clean()
 
-    path_output  = transformer.load_data_clean(df_cleaned, path_clean, storage_options = storage_options())
+    path_output, encoder_path  = transformer.load_data_clean(df_final, gcs_path = path_clean, encoder= encoder, storage_options = storage_options())
 
     assert path_output.endswith(".parquet"), 'The file does not have a parquet extension.'
+    assert encoder_path.endswith(".pkl"), 'The file does not have a pkl extension.'
     assert file_exists_minio(path_output), f'File {path_output} was not uploaded to MinIO'

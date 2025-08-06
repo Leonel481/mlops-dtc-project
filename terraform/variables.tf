@@ -46,6 +46,11 @@ variable "network" {
   default     = "default"
 }
 
+variable "ip" {
+  description = "Your personal public IP address in CIDR notation (e.g., 203.0.113.1/32)."
+  type        = string
+}
+
 variable "bucket_name" {
   description = "Name of the Google Cloud Storage bucket"
   type        = string

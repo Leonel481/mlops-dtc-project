@@ -1,0 +1,7 @@
+name: Deploy mlops project
+
+on: push
+
+jobs:
+
+  first-job:

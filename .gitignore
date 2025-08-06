@@ -2,10 +2,18 @@
 .env
 data/
 data-local/
-terraform/terraform.tfvars
+
 src/pipeline/__pycache__
 src/prefect/__pycache__
 test/__pycache__
 *.pyc
 *.pyo
 .pytest_cache/
+
+# Terraform
+terraform/terraform.tfvars
+terraform/.terraform
+terraform/.terraform.lock.hcl
+terraform/account_service/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup

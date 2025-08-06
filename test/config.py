@@ -1,7 +1,12 @@
 import os
 from dotenv import load_dotenv
+from unittest.mock import MagicMock
 import fsspec
 from src.pipeline.transform import TransformData
+from src.pipeline.model_train import ModelTrain
+import pytest
+import pandas as pd
+import numpy as np
 
 load_dotenv()
 
@@ -48,3 +53,38 @@ def load_sample_data(n_per_month=100):
             .drop(columns='Month'))
     
     return df_sample, tranformer
+
+@pytest.fixture
+def model_train_instance():
+    return ModelTrain(project="test-project", location="us-central1", bucket="gs://test-bucket")
+
+@pytest.fixture
+def mock_df():
+    return pd.DataFrame({
+        'CustomerID': range(10),
+        'window_id': [1, 1, 1, 2, 2, 3, 3, 4, 4, 4],
+        'feature1': np.random.rand(10),
+        'feature2': np.random.rand(10),
+        'churn': [0, 1, 0, 1, 0, 1, 0, 0, 1, 0]
+    })
+
+@pytest.fixture
+def mock_scalar_data():
+    mock_scaler = MagicMock()
+    mock_scaler.fit_transform.return_value = np.random.rand(4, 2)
+    mock_scaler.transform.side_effect = [np.random.rand(2, 2), np.random.rand(4, 2)]
+    return mock_scaler, (
+        np.random.rand(4, 2), pd.Series([0, 1, 0, 1]),
+        np.random.rand(2, 2), pd.Series([1, 0]),
+        np.random.rand(4, 2), pd.Series([0, 0, 1, 0]),
+    )
+
+class DummyModelForTest:
+    def __init__(self, **kwargs):
+        self.params = kwargs
+
+    def fit(self, X, y):
+        pass
+
+    def predict_proba(self, X):
+        return np.random.rand(X.shape[0], 2)

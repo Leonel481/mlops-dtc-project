@@ -5,32 +5,32 @@
 #--------- Firewall Rules -----------------------------------
 #------------------------------------------------------------
 
-# Firewall HTTP
-resource "google_compute_firewall" "allow_http" {
-  name    = "allow-http"
+# Firewall Prefect
+resource "google_compute_firewall" "allow_prefect" {
+  name    = "allow-prefect-ui"
   network = var.network  # Usa la variable para la red
 
   allow {
     protocol = "tcp"
-    ports    = ["80"]
+    ports    = ["4200"]
   }
 
-  target_tags   = ["http-server"]
+  target_tags   = ["prefect-ui"]
   source_ranges = ["0.0.0.0/0"]
 }
 
-# Firewall HTTPS
-resource "google_compute_firewall" "allow_https" {
-  name    = "allow-https"
+# Firewall SSH IP
+resource "google_compute_firewall" "allow-ssh_personal_ip" {
+  name    = "allow-ssh-ip"
   network = var.network  # Usa la variable para la red
 
   allow {
     protocol = "tcp"
-    ports    = ["443"]
+    ports    = ["22"]
   }
 
-  target_tags   = ["https-server"]
-  source_ranges = ["0.0.0.0/0"]
+  target_tags   = ["ssh-ip"]
+  source_ranges = [var.ip]
 }
 
 #------------------------------------------------------------
@@ -43,6 +43,13 @@ resource "google_storage_bucket" "mlops-bucket" {
   force_destroy = true
 
   uniform_bucket_level_access = true
+
+  labels = {
+    project_type  = "vm-add-tf"
+    environment   = "dev"
+    app           = "ml-pipeline"
+  }
+
 }
 
 # resource "google_storage_bucket_object" "data_raw_marker" {
@@ -57,7 +64,7 @@ resource "google_storage_bucket" "mlops-bucket" {
 #   content = ""
 # }
 
-# resource "google_storage_bucket_object" "models_marker" {
+# resource "google_storage_bucket_object" "artifacts_maker" {
 #   name   = "models/.init"
 #   bucket = google_storage_bucket.mlops_bucket.name
 #   content = ""
@@ -72,6 +79,11 @@ resource "google_storage_bucket" "mlops-bucket" {
 #------------------------------------------------------------
 #--------- Compute Engine Instance --------------------------
 #------------------------------------------------------------
+
+data "google_compute_image" "ubuntu" {
+  family  = "ubuntu-2204-lts"
+  project = "ubuntu-os-cloud"
+}
 
 resource "google_compute_instance" "vm-001-prod-scp-backend-uscentral" {
   boot_disk {
@@ -92,9 +104,9 @@ resource "google_compute_instance" "vm-001-prod-scp-backend-uscentral" {
   enable_display      = false
 
   labels = {
-    goog-ec-src   = "vm_add-tf"
-    environment   = "prod"
-    app           = "scp-backend"
+    goog-ec-src   = "vm-add-tf"
+    environment   = "dev"
+    app           = "ml-pipeline"
   }
 
   machine_type = var.vm_machine_type
@@ -103,14 +115,12 @@ resource "google_compute_instance" "vm-001-prod-scp-backend-uscentral" {
 
   network_interface {
     access_config {
-      nat_ip       = google_compute_address.static_external_ip.address
       network_tier = "PREMIUM"
     }
 
-    network_ip  = google_compute_address.static_internal_ip.address
     queue_count = 0
     stack_type  = "IPV4_ONLY"
-    subnetwork  = "projects/${var.gcp_project}/regions/${var.gcp_region}/subnetworks/default"  
+    subnetwork  = "projects/${var.gcp_project}/regions/${var.gcp_region}/subnetworks/${var.network}"  
   }
 
   scheduling {
@@ -122,12 +132,7 @@ resource "google_compute_instance" "vm-001-prod-scp-backend-uscentral" {
 
   service_account {
     email  = var.service_account
-    scopes = ["https://www.googleapis.com/auth/devstorage.read_only", 
-              "https://www.googleapis.com/auth/logging.write", 
-              "https://www.googleapis.com/auth/monitoring.write", 
-              "https://www.googleapis.com/auth/service.management.readonly", 
-              "https://www.googleapis.com/auth/servicecontrol", 
-              "https://www.googleapis.com/auth/trace.append"]
+    scopes = ["https://www.googleapis.com/auth/cloud-platform"] # Scope for all service in GCP
   }
 
   shielded_instance_config {
@@ -136,60 +141,50 @@ resource "google_compute_instance" "vm-001-prod-scp-backend-uscentral" {
     enable_vtpm                 = true
   }
 
-  depends_on = [google_compute_address.static_external_ip, google_compute_address.static_internal_ip]
+  depends_on = []
 
 
-  tags = ["http-server", "https-server"]
+  tags = ["prefect-ui", "ssh-ip"]
   
 }
 
 #------------------------------------------------------------
-#--------- Big Query ----------------------------------------
+#--------- Google BigQuery Dataset --------------------------
 #------------------------------------------------------------
-
-resource "google_bigquery_dataset" "mlops-dataset" {
-  dataset_id                  = var.bq_dataset_id
-  description                 = "Dataset for MLOps metrics"
-  location                    = var.bq_location
-
+resource "google_bigquery_dataset" "vertex_logging_dataset" {
+  dataset_id                 = var.bq_dataset_id
+  friendly_name              = "Vertex AI Metrics"
+  description                = "Dataset to store prediction request and response logs from Vertex AI."
+  location                   = var.bq_location
+  delete_contents_on_destroy = true
 }
 
-resource "google_bigquery_table" "model-metrics" {
-  dataset_id = google_bigquery_dataset.default.dataset_id
+resource "google_bigquery_table" "monitoring_metrics_table" {
+  dataset_id = google_bigquery_dataset.vertex_logging_dataset.dataset_id
   table_id   = var.bq_table_name
+  project    = var.gcp_project
 
-  time_partitioning {
-    type = "DAY"
-  }
-
-  labels = {
-    env = "default"
-  }
-
-  schema = <<EOF
-[
-  {
-    "name": "permalink",
-    "type": "STRING",
-    "mode": "NULLABLE",
-    "description": "The Permalink"
-  },
-  {
-    "name": "state",
-    "type": "STRING",
-    "mode": "NULLABLE",
-    "description": "State where the head office is located"
-  }
-]
-EOF
-
+  # Schema for table
+  schema = jsonencode([
+    {
+      "name" = "timestamp"
+      "type" = "TIMESTAMP"
+      "mode" = "REQUIRED"
+    },
+    {
+      "name" = "metric_type"
+      "type" = "STRING"
+      "mode" = "REQUIRED"
+    },
+    {
+      "name" = "feature_name"
+      "type" = "STRING"
+      "mode" = "NULLABLE"
+    },
+    {
+      "name" = "metric_value"
+      "type" = "FLOAT"
+      "mode" = "REQUIRED"
+    }
+  ])
 }
-
-
-# Cloud Functions
-
-
-# Cloud Run
-
-
-
