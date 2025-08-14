@@ -1,22 +1,18 @@
 import sys
+import os
 # sys.path.append("/app")
 
 from prefect import flow, task
 from src.pipeline.transform import TransformData
 from src.pipeline.model_train import ModelTrain
 # from src.pipeline.model_deploy import ModelEvaluate
+from dotenv import load_dotenv
 
 import pandas as pd
 import joblib
 
 
-BUCKET_PATH = "s3://mlops-bucket/data_raw/online_retail_cleaned_2009-2011.csv"
-EXPORT_PARQUET_PATH = "s3://mlops-bucket/data_processed"
-PROJECT = ''
-BUCKET = ''
-EXPERIMENT_NAME = ''
-PATH_DESTINY = ''
-
+load_dotenv()
 
 @task
 def task_ETL_data(path_ini: str, path_end: str, df_override: pd.DataFrame = None , **kwargs) -> str:
@@ -42,27 +38,34 @@ def task_ETL_data(path_ini: str, path_end: str, df_override: pd.DataFrame = None
     return final_path
 
 @task
-def task_train_model(gcs_path: str, models, param_space):
+def task_train_model(project, bucket, path_data_process: str, path_artifacts: str, path_models: str, path_metrics:str, models, param_space):
 
-    trainer = ModelTrain(project = PROJECT, bucket = BUCKET, experiment_name = EXPERIMENT_NAME)
-    X_train_scaled, X_valid_scaled, X_test_scaled, y_train, y_valid, y_test = trainer.load_and_prepare_initial_splits(gcs_path)
+    trainer = ModelTrain(project = project, bucket = bucket,
+                         path_artifacts = path_artifacts,
+                         path_models = path_models, 
+                         path_metrics = path_metrics)
+                         
+    X_train_scaled, X_valid_scaled, X_test_scaled, y_train, y_valid, y_test = trainer.load_and_prepare_initial_splits(path_data_process)
 
-    start_date =''
-    end_date = ''
-    data_source = ''
+    start_date ='18182025'
+    end_date = '20202025'
 
-    trainer.save_artifacts(path_destiny = PATH_DESTINY, start_date = start_date, 
-                           end_date = end_date, X_train_scaled = X_train_scaled, 
+    trainer.save_artifacts(start_date = start_date, end_date = end_date, X_train_scaled = X_train_scaled, 
                            X_valid_scaled = X_valid_scaled, X_test_scaled = X_test_scaled, 
                            y_train = y_train, y_valid = y_valid, y_test = y_test)
-    metrics = trainer.train_base_models(models = models, gcs_model_path = gcs_path, 
-                                        data_source = data_source, X_train = X_train_scaled, 
+    
+    metrics = trainer.train_base_models(models = models, data_source = path_data_process, X_train = X_train_scaled, 
                                         y_train = y_train, X_val = X_valid_scaled, y_val= y_valid)
-    trainer.registry_best_model(metrics = metrics, max_evals = 100)
+    
+    trainer.registry_best_model(results = metrics)
+
     trainer.generate_forward_chaining_splits()
-    gcs_eval_path = trainer.tune_model(param_space = param_space, max_evals = 100 )
-    trainer.evaluate_model(gcs_eval_path = gcs_eval_path, X_test_scaled = X_test_scaled, y_test = y_test)
-    trainer.register_final_model()
+
+    path_final_model = trainer.tune_model(param_space = param_space, max_evals = 100 )
+
+    trainer.evaluate_model(X_test_scaled = X_test_scaled, y_test = y_test)
+
+    trainer.register_final_model(path_final_model,y_test)
 
 
 # @task
@@ -74,17 +77,24 @@ def task_train_model(gcs_path: str, models, param_space):
 
 # --- Flow principal ---
 @flow(name="ML Pipeline")
-def ml_pipeline(path_ini, path_end, models, param_space, df_override=None, **kwargs):
+def ml_pipeline(project, bucket, path_ini, path_end, path_artifacts, path_models, path_metrics, models, param_space, df_override=None, **kwargs):
     clean_data_path = task_ETL_data(path_ini, path_end, df_override = df_override, **kwargs)
-    task_train_model(gcs_path = clean_data_path, models = models, param_space = param_space)
+    task_train_model(project, bucket, path_data_process = clean_data_path, 
+                     path_artifacts = path_artifacts, path_models = path_models, 
+                     path_metrics = path_metrics, models = models, param_space = param_space)
     # metrics = task_evaluate_model(model, X_test, y_test)
     return clean_data_path
 
 if __name__ == "__main__":
     ml_pipeline.serve(
         parameters = {
-            'path_ini': BUCKET_PATH,
-            'path_end': EXPORT_PARQUET_PATH,
+            'path_ini': os.getenv('DATA_RAW_PATH'),
+            'path_end': os.getenv('EXPORT_PARQUET_PATH'),
+            'project': os.getenv('PROJECT'),
+            'bucket': os.getenv('BUCKET'),
+            'path_artifacts': os.getenv('PATH_ARTIFACTS'),
+            'path_models': os.getenv('PATH_MODELS'),
+            'path_metrics': os.getenv('PATH_METRICS'),
             'models': {
                     "LogisticRegression": LogisticRegression(max_iter=1000, random_state=42),
                     "RandomForest": RandomForestClassifier(random_state=42),

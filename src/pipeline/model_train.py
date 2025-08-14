@@ -25,7 +25,12 @@ class ModelTrain():
     """
     Class for training model churn
     """
-    def __init__(self, project: str, location: str, bucket: str, serving_container_image_uri: str = "us-docker.pkg.dev/vertex-ai/prediction/sklearn-cpu.1-3:latest", experiment_name: str = "Churn_Prediction_Experiment"):
+    def __init__(self, project: str, location: str, bucket: str,
+                 path_artifacts: str,
+                 path_models: str,
+                 path_metrics: str,
+                 serving_container_image_uri: str = "us-docker.pkg.dev/vertex-ai/prediction/sklearn-cpu.1-3:latest", 
+                 experiment_name: str = "Churn_Prediction_Experiment"):
         """
         Initialize the ModelTrain class.
 
@@ -38,8 +43,12 @@ class ModelTrain():
         self.project = project
         self.location = location
         self.bucket = bucket
-        self.serving_container_image_uri = serving_container_image_uri
 
+        self.path_artifacts = path_artifacts
+        self.path_models = path_models
+        self.path_metrics = path_metrics
+
+        self.serving_container_image_uri = serving_container_image_uri
         self.experiment_name = experiment_name
 
         self.full_df = None 
@@ -73,17 +82,17 @@ class ModelTrain():
             self.main_experiment_run.__exit__(None, None, None)
             self.main_experiment_run = None
 
-    def load_and_prepare_initial_splits(self, gcs_path: str, test_window_size: int = 1 , **kwargs) -> Tuple:
+    def load_and_prepare_initial_splits(self, path_data_process: str, test_window_size: int = 1 , **kwargs) -> Tuple:
         """
         Load data procesed from Google Clous Storage only for training base models.
 
         Args:
-            gcs_path (str): Path to the CSV file in Google Cloud Storage.
+            path_data_process (str): Path to the parquet file in Google Cloud Storage.
 
         Returns:
             tuple: (X_train_scaled, X_valid_scaled, X_test_scaled, y_train, y_valid, y_test, scaler)
         """
-        self.full_df = pd.read_parquet(gcs_path, **kwargs)
+        self.full_df = pd.read_parquet(path_data_process, **kwargs)
 
         unique_windows = sorted(self.full_df['window_id'].unique())
         final_test_windows_ids = unique_windows[-test_window_size:]
@@ -106,12 +115,12 @@ class ModelTrain():
 
         return X_train_scaled, X_valid_scaled, X_test_scaled, y_train, y_valid,  y_test
     
-    def save_artifacts(self, path_destiny: str, start_date: str, end_date: str , X_train_scaled, X_valid_scaled, X_test_scaled, y_train, y_valid, y_test) -> Tuple :
+    def save_artifacts(self, start_date: str, end_date: str , X_train_scaled, X_valid_scaled, X_test_scaled, y_train, y_valid, y_test) -> Tuple :
         """
         Save model artifacts (datasets, scaler) as pickles.
 
         Args:
-            gcs_path (str): Base GCS path (e.g., "gs://bucket/artifacts").
+            path_destiny (str): Base GCS path (e.g., "gs://bucket/artifacts").
             X_train_scaled (np.ndarray): Scaled training features.
             X_valid_scaled (np.ndarray): Scaled validation features.
             X_test_scaled (np.ndarray): Scaled test features.
@@ -125,39 +134,37 @@ class ModelTrain():
         filename = f'data_{start_date}_{end_date}.parquet'
 
 
-        train_path = f"{path_destiny.rstrip('/')}/train_{filename}.pkl"
-        valid_path = f"{path_destiny.rstrip('/')}/valid_{filename}.pkl"
-        test_path = f"{path_destiny.rstrip('/')}/test_{filename}.pkl"
-        scaler_path = f"{path_destiny.rstrip('/')}/scaler_{filename}.pkl"
+        train_path = f"{self.path_artifacts.rstrip('/')}/train_{filename}.pkl"
+        valid_path = f"{self.path_artifacts.rstrip('/')}/valid_{filename}.pkl"
+        test_path = f"{self.path_artifacts.rstrip('/')}/test_{filename}.pkl"
+        scaler_path = f"{self.path_artifacts.rstrip('/')}/scaler_{filename}.pkl"
 
         dump_pickle((X_train_scaled, y_train), train_path)
         dump_pickle((X_valid_scaled, y_valid), valid_path)
         dump_pickle((X_test_scaled, y_test), test_path)
         dump_pickle(self.fitted_scaler, scaler_path)
 
-        print(f"Artifacts save to {path_destiny}")
+        print(f"Artifacts save to {self.path_artifacts}")
         
         return train_path, test_path, scaler_path
 
-    def train_base_models(self, models: Dict, gcs_model_path : str, data_source: str, X_train, y_train, X_val, y_val) -> List :
+    def train_base_models(self, models: Dict, data_source: str, X_train, y_train, X_val, y_val) -> List :
         """
         Train multiple models and return their ROC-AUC.
 
         Args:
             models (Dict): Dict with model names and sklearn-compatible estimators.
-            gcs_model_path (str): Base GCS path to save initial models.
+            data_source (str): path to the data source for logging.
             X_train: Features for training.
             y_train: Labels for training.
             X_eval: Features for evaluation.
             y_eval: Labels for evaluation.
 
         Returns:
-            results:
-            best_model_path: 
+            results: List of dictionaries with model names, scores, and paths.
         """
 
         results = []
-        best_roc_auc_val = -1
 
         if self.main_experiment_run is None:
             raise RuntimeError('Main experiment run must be active before training base models.')
@@ -192,7 +199,7 @@ class ModelTrain():
 
                 run.log_metrics(metrics)
 
-                model_path = f'{gcs_model_path.rstrip("/")}/{name}_base_model_{self.run_timestamp}.pkl'
+                model_path = f'{self.path_models.rstrip("/")}/{name}_base_model_{self.run_timestamp}.pkl'
                 dump_pickle(model_instance, model_path)
                 run.log_artifacts({"base_model_artifact_path": model_path})
 
@@ -259,7 +266,6 @@ class ModelTrain():
             gcs_path (str): Path to the CSV file in Google Cloud Storage.
             min_train_windows (int): Minimum number of initial windows to use for the training set.
             validation_window_size (int): Number of windows to use for the validation set in each step.
-            
 
         Returns:
             tuple: (X_train_scaled, X_valid_scaled, X_test_scaled, y_train, y_valid, y_test, scaler)
@@ -285,12 +291,11 @@ class ModelTrain():
             
             yield X_train_scaled_fold, y_train_fold, X_val_scaled_fold, y_val_fold
 
-    def tune_model(self, gcs_model_tuned_path: str, param_space: Dict, min_train_windows_fc: int = 2 , validation_window_size_fc: int = 1, max_evals: int = 50, **kwargs) -> str:
+    def tune_model(self, param_space: Dict, min_train_windows_fc: int = 2 , validation_window_size_fc: int = 1, max_evals: int = 50, **kwargs) -> str:
         """
         Performs hyperparameter tuning on the best base model using Hyperopt and forward chaining validation.
         
         Args:
-            gcs_model_tuned_path (str): GCS path to best model base for tune.
             param_space (Dict): Dictionary defining the hyperparameter search space using hyperopt.hp.
             min_train_windows_fc (int): Minimum number of initial windows for the training set in forward chaining.
             validation_window_size_fc (int): Number of windows for the validation set in each forward chaining step.
@@ -388,28 +393,27 @@ class ModelTrain():
             self.best_model.fit(X_final_train_val_scaled, y_final_train_val)
 
 
-            final_model_gcs_path = f'{gcs_model_tuned_path.rstrip("/")}/{self.best_model_name}_final_tuned_model_{self.run_timestamp}.pkl'
-            dump_pickle(self.best_model, final_model_gcs_path, **kwargs)
+            path_final_model = f'{self.path_models.rstrip("/")}/{self.best_model_name}_final_tuned_model_{self.run_timestamp}.pkl'
+            dump_pickle(self.best_model, path_final_model, **kwargs)
 
             # Log the final best parameters and metrics for the entire tuning run
             run.log_params({"final_best_hyperparameters": json.dumps(best_hyperparams)})
             run.log_metrics({"final_best_avg_roc_auc_tuning": best_avg_roc_auc})
-            aiplatform.log_artifacts({"final_tuned_model_path": final_model_gcs_path})
+            aiplatform.log_artifacts({"final_tuned_model_path": path_final_model})
         
-        return final_model_gcs_path
+        return path_final_model
 
-    def evaluate_model(self, gcs_eval_path: str, X_test_scaled, y_test) -> str:
+    def evaluate_model(self, X_test_scaled, y_test) -> str:
         """
         Evaluates the final best model on the unseen test set.
         Logs metrics to Vertex AI Experiment.
 
         Args:
-            gcs_eval_path (str): 
-            X_test_scaled
-            y_test
+            X_test_scaled: Features for the test set, scaled.
+            y_test: Final labels for the test set.
 
         Return:
-            test_results_path
+            test_results_path: Path to the saved test results pickle file.
         """
 
         y_pred_proba_test = self.best_model.predict_proba(X_test_scaled)[:, 1]
@@ -427,41 +431,41 @@ class ModelTrain():
         self.final_test_metrics = metrics_test
         self.main_experiment_run.log_metrics(self.final_test_metrics)
 
-        test_results_path = f"{gcs_eval_path.rstrip('/')}/test_results_{self.run_timestamp}.pkl"
+        test_results_path = f"{self.path_metrics.rstrip('/')}/test_results_{self.run_timestamp}.pkl"
         dump_pickle({"y_true": y_test, "y_pred_proba": y_pred_proba_test}, test_results_path)
         self.main_experiment_run.log_artifacts({"final_test_results_path": test_results_path})
 
         return test_results_path
     
-    def register_final_model(self, model_display_name: str, final_model_gcs_path: str, y_test) -> aiplatform.Model:
+    def register_final_model(self, path_final_model: str, y_test) -> aiplatform.Model:
         """
         Registers the final tuned model in Vertex AI Model Registry.
         This function now also calls _import_model_evaluation to link test metrics.
 
         Args:
             model_display_name (str): The display name for the model in Vertex AI Model Registry.
-
+            path_final_model (str): GCS path to the final tuned model artifact.
+            y_test: Final labels for the test set, used for evaluation metrics.
         Returns:
             aiplatform.Model: The registered Vertex AI Model object.
         """
 
-        model_display_name_with_ts = f'{model_display_name}-{self.run_timestamp}'
-        artifact_dir_uri = final_model_gcs_path.rsplit('/', 1)[0]
+        artifact_dir_uri = path_final_model.rsplit('/', 1)[0]
 
         parent_model_resource_name = None
         try:
-            existing_models = aiplatform.Model.list(filter=f'display_name="{model_display_name}"')
+            existing_models = aiplatform.Model.list(filter=f'display_name="{self.best_model_name}"')
             if existing_models:
                 parent_model_resource_name = existing_models[0].resource_name
-                print(f'Existing model "{model_display_name}" found. Registering as new version under: {parent_model_resource_name}')
+                print(f'Existing model "{self.best_model_name}" found. Registering as new version under: {parent_model_resource_name}')
             else:
-                print(f'No existing model "{model_display_name}" found. Creating a new model.')
+                print(f'No existing model "{self.best_model_name}" found. Creating a new model.')
         except Exception as e:
             print(f'Failed to check for existing models: {e}. Attempting to upload a new model.')
 
 
         model = aiplatform.Model.upload(
-            display_name=model_display_name_with_ts if not parent_model_resource_name else model_display_name, # Use original display name if parenting
+            display_name=self.best_model_name,
             artifact_uri=artifact_dir_uri,
             serving_container_image_uri=self.serving_container_image_uri, 
             serving_container_predict_route="/predict",
@@ -474,7 +478,7 @@ class ModelTrain():
         )
         print(f'Model "{model.display_name}" registered with ID: {model.resource_name}')
         self.registered_model = model
-        self._import_model_evaluation(self.main_experiment_run.name, model_display_name_with_ts, y_test)
+        self._import_model_evaluation(self.main_experiment_run.name, self.best_model_name, y_test)
 
         return model
 
@@ -526,7 +530,7 @@ class ModelTrain():
             print(f"Model evaluation imported successfully: {response.name}")
 
         except Exception as e:
-            print(f"Failed to import model evaluation for model '{model_display_name}': {e}", exc_info=True)
+            print(f"Failed to import model evaluation for model '{model_name}': {e}", exc_info=True)
             # Log failure to the main experiment run
             if self.main_experiment_run:
                 self.main_experiment_run.log_params({"model_evaluation_import_status": "FAILED", "error_message": str(e)})

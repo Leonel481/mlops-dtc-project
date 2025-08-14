@@ -6,7 +6,8 @@ from google.cloud import bigquery
 import json
 
 from evidently import Report
-from evidently.metrics import *
+# from evidently.metrics import *
+from evidently import DataDefinition, BinaryClassification
 from evidently.presets import DataDriftPreset, ClassificationPreset
 
 
@@ -32,7 +33,7 @@ class ModelDeploy:
         self.bigquery_table_id = bigquery_table_id
         self.model = None
         self.scaler = None
-        self.one = None
+        self.oneHot = None
         self.bq_client = bigquery.Client(project=self.project)
 
     def load_artifacts(self, model_path: str, scaler_path: str, encoder_path : str, **kwargs) -> None:
@@ -145,6 +146,13 @@ class ModelDeploy:
             current_data (pd.DataFrame): Current data with new predictions.
         """
         # Create an Evidently Report with data quality and classification metrics
+
+        data_definition = DataDefinition(
+            numerical_columns=[],
+            categorical_columns=[],
+            classification= [BinaryClassification(target= 'Churn', prediction_labels='Predicted_label', prediction_probas= 'Predicted_proba', pos_label=1)]
+        )
+
         data_and_model_report = Report(metrics=[
             DataDriftPreset(),
             ClassificationPreset()
@@ -153,7 +161,7 @@ class ModelDeploy:
         data_and_model_report.run(
             reference_data=reference_data, 
             current_data=current_data,
-            column_mapping=None
+            data_definition=data_definition
         )
         
         timestamp_now = pd.Timestamp.now().isoformat()
