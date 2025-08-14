@@ -5,6 +5,9 @@ description = "End-to-end MLOps pipeline for predicting customer churn using e-c
 authors = ["Leonel481 <leonel.aliaga.v@gmail.com>"]
 license = "MIT"
 readme = "README.md"
+packages = [
+    { include = "src" }
+]
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.14"
