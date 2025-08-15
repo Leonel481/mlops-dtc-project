@@ -69,7 +69,7 @@ class ModelTrain():
         """
 
         if run_name is None:
-            run_name = f'Pipeline-Churn-{self.run_timestamp}'
+            run_name = f'pipeline-{self.run_timestamp}'
 
         self.main_experiment_run = aiplatform.start_run(run = run_name)
         self.main_experiment_run.__enter__()
