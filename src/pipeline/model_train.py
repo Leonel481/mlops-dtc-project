@@ -30,7 +30,7 @@ class ModelTrain():
                  path_models: str,
                  path_metrics: str,
                  serving_container_image_uri: str = "us-docker.pkg.dev/vertex-ai/prediction/sklearn-cpu.1-3:latest", 
-                 experiment_name: str = "Churn_Prediction_Experiment"):
+                 experiment_name: str = "churn-prediction-experiment"):
         """
         Initialize the ModelTrain class.
 
