@@ -47,7 +47,7 @@ def task_ETL_data(path_ini: str, path_end: str, df_override: pd.DataFrame = None
     return final_path, encoder_path
 
 @task
-def task_train_model(project, bucket, path_data_process: str, path_artifacts: str, path_models: str, path_metrics:str, models, param_space):
+def task_train_model(project, bucket, path_data_process: str, path_artifacts: str, path_models: str, path_metrics:str):
 
     models = {
         "LogisticRegression": LogisticRegression(max_iter=1000, random_state=42),
