@@ -40,9 +40,11 @@ def task_ETL_data(path_ini: str, path_end: str, df_override: pd.DataFrame = None
     cols = df_transform.drop(columns=['CustomerID', 'window_id', 'churn']).columns.tolist()
     df_cleaned = transformer.handle_outliers(df_transform, cols)
 
-    final_path = transformer.load_data_clean(df_cleaned, path_end, **kwargs)
+    df, encoder = transformer.features(df_cleaned)
 
-    return final_path
+    final_path, encoder_path = transformer.load_data_clean(df_cleaned, path_end, encoder, **kwargs)
+
+    return final_path, encoder_path
 
 @task
 def task_train_model(project, bucket, path_data_process: str, path_artifacts: str, path_models: str, path_metrics:str, models, param_space):
@@ -102,7 +104,7 @@ def task_train_model(project, bucket, path_data_process: str, path_artifacts: st
 # --- Flow principal ---
 @flow(name="ML Pipeline")
 def ml_pipeline(project, bucket, path_ini, path_end, path_artifacts, path_models, path_metrics, df_override=None, **kwargs):
-    clean_data_path = task_ETL_data(path_ini, path_end, df_override = df_override, **kwargs)
+    clean_data_path, encoder_path  = task_ETL_data(path_ini, path_end, df_override = df_override, **kwargs)
     task_train_model(project, bucket, path_data_process = clean_data_path, 
                      path_artifacts = path_artifacts, path_models = path_models, 
                      path_metrics = path_metrics)
