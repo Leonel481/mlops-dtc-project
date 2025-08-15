@@ -6,7 +6,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
-from hyperopt import hp, scope
+from hyperopt import hp
+from hyperopt.pyll.base import scope
 
 from prefect import flow, task
 from src.pipeline.transform import TransformData
