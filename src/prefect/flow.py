@@ -72,6 +72,8 @@ def task_train_model(project, bucket, location, path_data_process: str, path_art
                          path_models = path_models, 
                          path_metrics = path_metrics)
                          
+    trainer.start_main_run()
+
     X_train_scaled, X_valid_scaled, X_test_scaled, y_train, y_valid, y_test = trainer.load_and_prepare_initial_splits(path_data_process)
 
     start_date ='18182025'
@@ -94,6 +96,7 @@ def task_train_model(project, bucket, location, path_data_process: str, path_art
 
     trainer.register_final_model(path_final_model,y_test)
 
+    trainer.end_main_run()
 
 # @task
 # def task_evaluate_model(model, X_test, y_test):
