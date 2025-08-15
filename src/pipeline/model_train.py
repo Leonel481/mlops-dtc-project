@@ -58,7 +58,7 @@ class ModelTrain():
         self.best_model_name = None
         self.run_timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 
-        aiplatform.init(project=project, location=location)
+        aiplatform.init(project=project, location=location, experiment=self.experiment_name)
    
     def start_main_run(self, job_id: str = None) -> None:
         """
@@ -71,7 +71,7 @@ class ModelTrain():
         if job_id is None:
             job_id = f'Pipeline-Churn-{self.run_timestamp}'
 
-        self.main_experiment_run = aiplatform.start_run(experiment = self.experiment_name, job_id = job_id)
+        self.main_experiment_run = aiplatform.start_run(job_id = job_id)
         self.main_experiment_run.__enter__()
 
     def end_main_run(self) -> None:
