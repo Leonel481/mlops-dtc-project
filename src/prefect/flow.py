@@ -47,7 +47,7 @@ def task_ETL_data(path_ini: str, path_end: str, df_override: pd.DataFrame = None
     return final_path, encoder_path
 
 @task
-def task_train_model(project, bucket, path_data_process: str, path_artifacts: str, path_models: str, path_metrics:str):
+def task_train_model(project, bucket, location, path_data_process: str, path_artifacts: str, path_models: str, path_metrics:str):
 
     models = {
         "LogisticRegression": LogisticRegression(max_iter=1000, random_state=42),
@@ -67,6 +67,7 @@ def task_train_model(project, bucket, path_data_process: str, path_artifacts: st
     }
 
     trainer = ModelTrain(project = project, bucket = bucket,
+                         location = location,
                          path_artifacts = path_artifacts,
                          path_models = path_models, 
                          path_metrics = path_metrics)
@@ -103,9 +104,9 @@ def task_train_model(project, bucket, path_data_process: str, path_artifacts: st
 
 # --- Flow principal ---
 @flow(name="ML Pipeline")
-def ml_pipeline(project, bucket, path_ini, path_end, path_artifacts, path_models, path_metrics, df_override=None, **kwargs):
+def ml_pipeline(project, location, bucket, path_ini, path_end, path_artifacts, path_models, path_metrics, df_override=None, **kwargs):
     clean_data_path, encoder_path  = task_ETL_data(path_ini, path_end, df_override = df_override, **kwargs)
-    task_train_model(project, bucket, path_data_process = clean_data_path, 
+    task_train_model(project, bucket, location = location, path_data_process = clean_data_path, 
                      path_artifacts = path_artifacts, path_models = path_models, 
                      path_metrics = path_metrics)
     # metrics = task_evaluate_model(model, X_test, y_test)
@@ -117,6 +118,7 @@ if __name__ == "__main__":
             'path_ini': os.getenv('DATA_RAW_PATH'),
             'path_end': os.getenv('EXPORT_PARQUET_PATH'),
             'project': os.getenv('PROJECT'),
+            'location': os.getenv('LOCATION'),
             'bucket': os.getenv('BUCKET'),
             'path_artifacts': os.getenv('PATH_ARTIFACTS'),
             'path_models': os.getenv('PATH_MODELS'),
