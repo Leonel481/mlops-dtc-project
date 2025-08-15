@@ -65,13 +65,19 @@ resource "google_storage_bucket" "mlops-bucket" {
 # }
 
 # resource "google_storage_bucket_object" "artifacts_maker" {
+#   name   = "artifacts/.init"
+#   bucket = google_storage_bucket.mlops_bucket.name
+#   content = ""
+# }
+
+# resource "google_storage_bucket_object" "models_maker" {
 #   name   = "models/.init"
 #   bucket = google_storage_bucket.mlops_bucket.name
 #   content = ""
 # }
 
-# resource "google_storage_bucket_object" "predictions_marker" {
-#   name   = "predictions/.init"
+# resource "google_storage_bucket_object" "metricss_marker" {
+#   name   = "metrics/.init"
 #   bucket = google_storage_bucket.mlops_bucket.name
 #   content = ""
 # }

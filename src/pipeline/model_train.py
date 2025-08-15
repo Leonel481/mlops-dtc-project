@@ -60,18 +60,18 @@ class ModelTrain():
 
         aiplatform.init(project=project, location=location, experiment=self.experiment_name)
    
-    def start_main_run(self, job_id: str = None) -> None:
+    def start_main_run(self, run_name: str = None) -> None:
         """
         Starts the main Vertex AI Experiment run for this entire workflow.
 
         Args:
-            job_id (str): Job_id main for experiment run.
+            run_name (str): run_name main for experiment run.
         """
 
-        if job_id is None:
-            job_id = f'Pipeline-Churn-{self.run_timestamp}'
+        if run_name is None:
+            run_name = f'Pipeline-Churn-{self.run_timestamp}'
 
-        self.main_experiment_run = aiplatform.start_run(job_id = job_id)
+        self.main_experiment_run = aiplatform.start_run(run = run_name)
         self.main_experiment_run.__enter__()
 
     def end_main_run(self) -> None:
@@ -178,8 +178,8 @@ class ModelTrain():
             
             current_run_id = f'{name}-training-{self.run_timestamp}'
             
-            # Start a sub-run linked to the main experiment run implicitly by `experiment` and `job_id`
-            with aiplatform.start_run(experiment=self.experiment_name, job_id=current_run_id, resume=True) as run:
+            # Start a sub-run linked to the main experiment run implicitly by `experiment` and `run_name`
+            with aiplatform.start_run(experiment=self.experiment_name, run_name=current_run_id, resume=True) as run:
                 
                 run.log_params({"model_type": name, "split_type": "initial_fixed_split", **model_instance.get_params()})
 
@@ -309,7 +309,7 @@ class ModelTrain():
 
         tuning_run_id = f"tuning-{self.best_model_name}-{self.run_timestamp}"
 
-        with aiplatform.start_run(experiment = self.experiment_name, job_id = tuning_run_id, resume = True) as run:
+        with aiplatform.start_run(experiment = self.experiment_name, run_name = tuning_run_id, resume = True) as run:
             run.log_params({'tuning_method': 'HyperoptForwardChaining', 
                             'base_model': self.best_model_name, 
                             'max_evaluations': max_evals})
