@@ -58,6 +58,8 @@ class ModelTrain():
         self.best_model_name = None
         self.run_timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 
+        self.model_class_map = {} 
+        
         aiplatform.init(project=project, location=location, experiment=self.experiment_name)
    
     def start_main_run(self, run_name: str = None) -> None:
