@@ -57,13 +57,15 @@ def task_train_model(project, bucket, location, path_data_process: str, path_art
     }
     
     param_space = {
-        'max_depth': scope.int(hp.quniform('max_depth', 4, 15, 1)),
-        'learning_rate': hp.loguniform('learning_rate', -3, 0),
+        'max_depth': scope.int(hp.quniform('max_depth', 4, 10, 1)),
+        'num_leaves': scope.int(hp.quniform('num_leaves', 16, 128, 1)),
+        'learning_rate': hp.loguniform('learning_rate', -3, -1.2),  # 0.05 - 0.36
         'reg_alpha': hp.loguniform('reg_alpha', -5, -1),
         'reg_lambda': hp.loguniform('reg_lambda', -6, -1),
-        'min_child_weight': hp.loguniform('min_child_weight', -1, 3),
+        'min_child_samples': scope.int(hp.quniform('min_child_samples', 20, 100, 1)),
         'subsample': hp.uniform('subsample', 0.6, 1.0),
-        'colsample_bytree': hp.uniform('colsample_bytree', 0.6, 1.0)
+        'colsample_bytree': hp.uniform('colsample_bytree', 0.6, 1.0),
+        'bagging_freq': scope.int(hp.quniform('bagging_freq', 1, 7, 1))
     }
 
     trainer = ModelTrain(project = project, bucket = bucket,

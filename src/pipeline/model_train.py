@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from datetime import datetime
 from google.cloud import aiplatform
 import pickle, fsspec
@@ -178,12 +179,17 @@ class ModelTrain():
 
         for name, model_instance in models.items():
             
-            current_run_id = f'{name}-training-{self.run_timestamp}'
+            current_run_id = f'{name.lower()}-training-{self.run_timestamp}'
             
             # Start a sub-run linked to the main experiment run implicitly by `experiment` and `run_name`
-            with aiplatform.start_run(experiment=self.experiment_name, run_name=current_run_id, resume=True) as run:
+            with aiplatform.start_run(run=current_run_id) as run:
                 
-                run.log_params({"model_type": name, "split_type": "initial_fixed_split", **model_instance.get_params()})
+                filtered_params = {
+                    k: v for k, v in model_instance.get_params().items()
+                    if v is not None and (not isinstance(v, (int, float)) or np.isfinite(v))
+                }
+
+                run.log_params({"model_type": name, "split_type": "initial_fixed_split", **filtered_params})
 
                 model_instance.fit(X_train, y_train)
                 y_pred_proba = model_instance.predict_proba(X_val)[:, 1]
@@ -201,13 +207,23 @@ class ModelTrain():
 
                 run.log_metrics(metrics)
 
-                model_path = f'{self.path_models.rstrip("/")}/{name}_base_model_{self.run_timestamp}.pkl'
-                dump_pickle(model_instance, model_path)
-                run.log_artifacts({"base_model_artifact_path": model_path})
+                model_folder = f'{self.path_models.rstrip("/")}/{name}_base_model_{self.run_timestamp}'
+                model_file_path = f'{model_folder}/model.pkl'
+                
+                # model_path = f'{self.path_models.rstrip("/")}/{name}_base_model_{self.run_timestamp}.pkl'
+                dump_pickle(model_instance, model_file_path)
+
+                artifact = aiplatform.Artifact.create(
+                    schema_title='system.Model',
+                    display_name=f"{name}-base-model",
+                    uri=model_file_path
+                )
+
+                run.log_params({"model_uri": model_file_path})
 
                 results.append({'name': name, 
                                 'score': roc_auc,
-                                'path': model_path})
+                                'path': model_folder})
 
         results = sorted(results, key=lambda x: x['score'], reverse=True)
         self.best_model_name = results[0]['name']
@@ -228,8 +244,9 @@ class ModelTrain():
             aiplatform.Model: Objeto del modelo registrado en Vertex AI.
         """
 
-
-        version_description = f"Model {self.best_model_name} training at {self.run_timestamp}. ROC AUC (Test): {results[0]['score']:.4f}."
+        best_model_info = results[0]
+        gcs_model_path = best_model_info['path']
+        version_description = f"Model {self.best_model_name} training at {self.run_timestamp}. ROC AUC (Test): {best_model_info['score']:.4f}."
 
         try:
             existing_models = aiplatform.Model.list(filter=f'display_name="{self.best_model_name}"')
@@ -239,7 +256,7 @@ class ModelTrain():
             if parent_model_resource_name:
                 model_resource= aiplatform.Model.upload(
                     display_name = self.best_model_name,
-                    artifact_uri = results[0]['path'],
+                    artifact_uri = gcs_model_path,
                     serving_container_image_uri=self.serving_container_image_uri,
                     parent_model = parent_model_resource_name,
                     version_description = version_description
@@ -249,7 +266,7 @@ class ModelTrain():
             else:
                 model_resource = aiplatform.Model.upload(
                     display_name = self.best_model_name,
-                    artifact_uri = results[0]['path'],
+                    artifact_uri = gcs_model_path,
                     serving_container_image_uri=self.serving_container_image_uri,
                     is_default_version = True,
                     version_description = version_description
@@ -309,9 +326,9 @@ class ModelTrain():
 
         model_class = self.model_class_map[self.best_model_name]
 
-        tuning_run_id = f"tuning-{self.best_model_name}-{self.run_timestamp}"
+        tuning_run_id = f"tuning-{self.best_model_name.lower()}-{self.run_timestamp}"
 
-        with aiplatform.start_run(experiment = self.experiment_name, run_name = tuning_run_id, resume = True) as run:
+        with aiplatform.start_run(run = tuning_run_id) as run:
             run.log_params({'tuning_method': 'HyperoptForwardChaining', 
                             'base_model': self.best_model_name, 
                             'max_evaluations': max_evals})
@@ -325,6 +342,17 @@ class ModelTrain():
                 across forward chaining folds and returns the negative average ROC AUC.
                 Hyperopt minimizes the objective function.
                 """
+
+                if 'max_depth' in hyperparams:
+                    hyperparams['max_depth'] = int(hyperparams['max_depth'])
+                if 'num_leaves' in hyperparams:
+                    hyperparams['num_leaves'] = int(hyperparams['num_leaves'])
+                if 'min_child_samples' in hyperparams:
+                    hyperparams['min_child_samples'] = int(hyperparams['min_child_samples'])
+                if 'min_child_weight' in hyperparams:
+                    hyperparams['min_child_weight'] = int(hyperparams['min_child_weight'])
+                if 'bagging_freq' in hyperparams:
+                    hyperparams['bagging_freq'] = int(hyperparams['bagging_freq'])
 
                 fold_roc_aucs = []
 
@@ -373,6 +401,12 @@ class ModelTrain():
             best_hyperparams = {k: v[0] if isinstance(v, list) else v for k, v in best_hyperparams.items()}
             best_avg_roc_auc = -best_trial['result']['loss']
 
+            for param in ['max_depth', 'num_leaves', 'min_child_samples', 'min_child_weight', 'bagging_freq']:
+                if param in best_hyperparams:
+                    if isinstance(best_hyperparams.get(param), float):
+                        best_hyperparams[param] = int(best_hyperparams[param])
+            
+
             print(f'Tuning complete. Best hyperparameters found: {best_hyperparams}')
             print(f'Best average ROC AUC: {best_avg_roc_auc:.4f}')
 
@@ -394,16 +428,18 @@ class ModelTrain():
             # Fit this final model
             self.best_model.fit(X_final_train_val_scaled, y_final_train_val)
 
+            path_model_folder = f'{self.path_models.rstrip("/")}/{self.best_model_name}_tuned_model_{self.run_timestamp}'
+            tune_model_file_path = f'{path_model_folder}/model.pkl'
 
-            path_final_model = f'{self.path_models.rstrip("/")}/{self.best_model_name}_final_tuned_model_{self.run_timestamp}.pkl'
-            dump_pickle(self.best_model, path_final_model, **kwargs)
+            # path_final_model = f'{self.path_models.rstrip("/")}/{self.best_model_name}_final_tuned_model_{self.run_timestamp}.pkl'
+            dump_pickle(self.best_model, tune_model_file_path, **kwargs)
 
             # Log the final best parameters and metrics for the entire tuning run
             run.log_params({"final_best_hyperparameters": json.dumps(best_hyperparams)})
             run.log_metrics({"final_best_avg_roc_auc_tuning": best_avg_roc_auc})
-            aiplatform.log_artifacts({"final_tuned_model_path": path_final_model})
+            run.log_params({"final_tuned_model_path": tune_model_file_path})
         
-        return path_final_model
+        return tune_model_file_path
 
     def evaluate_model(self, X_test_scaled, y_test) -> str:
         """
@@ -435,7 +471,7 @@ class ModelTrain():
 
         test_results_path = f"{self.path_metrics.rstrip('/')}/test_results_{self.run_timestamp}.pkl"
         dump_pickle({"y_true": y_test, "y_pred_proba": y_pred_proba_test}, test_results_path)
-        self.main_experiment_run.log_artifacts({"final_test_results_path": test_results_path})
+        self.main_experiment_run.log_params({"final_test_results_path": test_results_path})
 
         return test_results_path
     
@@ -532,7 +568,7 @@ class ModelTrain():
             print(f"Model evaluation imported successfully: {response.name}")
 
         except Exception as e:
-            print(f"Failed to import model evaluation for model '{model_name}': {e}", exc_info=True)
+            print(f"Failed to import model evaluation for model '{model_name}': {e}")
             # Log failure to the main experiment run
             if self.main_experiment_run:
                 self.main_experiment_run.log_params({"model_evaluation_import_status": "FAILED", "error_message": str(e)})
